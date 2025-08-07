@@ -1,4 +1,4 @@
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
 use std::{borrow::Cow, panic::Location as StdLocation};
 
 use anyhow::anyhow;
@@ -19,14 +19,14 @@ fn serialize_source<S: Serializer>(
     value: &anyhow::Error,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&format!("{:#?}", value))
+    serializer.serialize_str(&format!("{value:#?}"))
 }
 
 fn deserialize_source<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<anyhow::Error, D::Error> {
     struct SourceVisitor;
-    impl<'de> Visitor<'de> for SourceVisitor {
+    impl Visitor<'_> for SourceVisitor {
         type Value = anyhow::Error;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -132,15 +132,17 @@ impl<T> AddLocation<T> for Result<T, LocationError> {
     }
 }
 
-#[track_caller]
-pub fn insert_location<E>(value: E) -> LocationError
-where
-    anyhow::Error: From<E>,
-{
-    let caller = std::panic::Location::caller().into();
-    let backtrace = vec![caller];
-    let source = anyhow::Error::from(value);
-    LocationError { source, backtrace }
+impl LocationError {
+    #[track_caller]
+    pub fn new<E>(value: E) -> Self
+    where
+        anyhow::Error: From<E>,
+    {
+        let caller = std::panic::Location::caller().into();
+        let backtrace = vec![caller];
+        let source = anyhow::Error::from(value);
+        LocationError { source, backtrace }
+    }
 }
 
 pub trait ToLocation<T> {
@@ -157,7 +159,7 @@ where
     fn loc(self) -> LocationResult<T> {
         match self {
             Ok(ok) => Ok(ok),
-            Err(err) => Err(insert_location(err)),
+            Err(err) => Err(LocationError::new(err)),
         }
     }
 
@@ -178,7 +180,7 @@ impl<T> ToLocation<T> for Option<T> {
     fn loc(self) -> LocationResult<T> {
         match self {
             Some(some) => Ok(some),
-            None => Err(insert_location(anyhow!(OPTION_ERR))),
+            None => Err(LocationError::new(anyhow!(OPTION_ERR))),
         }
     }
 
@@ -203,7 +205,6 @@ fn location_error_serde() {
 
     dbg!(recovered_err);
 }
-
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct DisplayString(pub String);
@@ -233,4 +234,3 @@ impl From<DisplayString> for String {
         value.0
     }
 }
-
